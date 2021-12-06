@@ -120,11 +120,6 @@ fi
 ## Build the message's subject
 SUBJECT="[$NOTIFICATIONTYPE] Host $HOSTDISPLAYNAME is $HOSTSTATE!"
 
-## Are we verbose? Then put a message to syslog...
-if [ "$VERBOSE" == "true" ] ; then
-  logger "$PROG sends $SUBJECT => Telegram Channel $TELEGRAM_BOT"
-fi
-
 ## debug output or not
 if [ -z $DEBUG ];then
     CURLARGS="--silent --output /dev/null"
@@ -135,10 +130,20 @@ else
 fi
 
 ## And finally, send the message
-/usr/bin/curl $CURLARGS \
+HTTP_CODE=`/usr/bin/curl $CURLARGS \
     --data-urlencode "chat_id=${TELEGRAM_CHATID}" \
     --data-urlencode "text=${NOTIFICATION_MESSAGE}" \
     --data-urlencode "parse_mode=HTML" \
     --data-urlencode "disable_web_page_preview=true" \
-    "https://api.telegram.org/bot${TELEGRAM_BOTTOKEN}/sendMessage"
+    --write-out "%{http_code}" \
+    "https://api.telegram.org/bot${TELEGRAM_BOTTOKEN}/sendMessage"`
+STATUS=$?
 set +x
+
+## Are we verbose? Then put a message to syslog...
+if [ "$VERBOSE" == "true" ] ; then
+  logger "$PROG sent $SUBJECT => Telegram Channel $TELEGRAM_BOT - code: $HTTP_CODE status: $STATUS"
+fi
+
+# exit 0 if no errors from curl request, else exit non-zero
+[ "$STATUS" = 0 -a "$HTTP_CODE" = 200 ]
