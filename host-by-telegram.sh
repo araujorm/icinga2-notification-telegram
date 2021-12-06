@@ -130,20 +130,49 @@ else
 fi
 
 ## And finally, send the message
-HTTP_CODE=`/usr/bin/curl $CURLARGS \
-    --data-urlencode "chat_id=${TELEGRAM_CHATID}" \
-    --data-urlencode "text=${NOTIFICATION_MESSAGE}" \
-    --data-urlencode "parse_mode=HTML" \
-    --data-urlencode "disable_web_page_preview=true" \
-    --write-out "%{http_code}" \
-    "https://api.telegram.org/bot${TELEGRAM_BOTTOKEN}/sendMessage"`
-STATUS=$?
+## if needed to comply with 4096 characters limit, try to split around a newline near every 3000 characters to have a margin for possible encodings
+
+EX=0
+HTTP_CODES=()
+STATUSES=()
+send_message() {
+  TXT="$1"
+  HTTP_CODE=`/usr/bin/curl $CURLARGS \
+      --data-urlencode "chat_id=${TELEGRAM_CHATID}" \
+      --data-urlencode "text=${TXT}" \
+      --data-urlencode "parse_mode=HTML" \
+      --data-urlencode "disable_web_page_preview=true" \
+      --write-out "%{http_code}" \
+      "https://api.telegram.org/bot${TELEGRAM_BOTTOKEN}/sendMessage"`
+  STATUS=$?
+  if [ $EX -eq 0 ]; then
+    [ "$STATUS" = 0 -a "$HTTP_CODE" = 200 ]
+    EX=$?
+  fi
+  HTTP_CODE=("${HTTP_CODES[@]}" "$HTTP_CODE")
+  STATUSES=("${STATUSES[@]}" "$STATUS")
+}
+
+readarray -t MESSAGE_LINES <<< "$NOTIFICATION_MESSAGE"
+MESSAGE="${MESSAGE_LINES[0]}"
+MESSAGE_LINES=("${MESSAGE_LINES[@]:1}")
+for LINE in "${MESSAGE_LINES[@]}" ; do
+  if [[ ${#MESSAGE}+${#LINE}+1 -gt 3000 ]]; then
+    send_message "$MESSAGE"
+    MESSAGE="$LINE"
+  else
+    MESSAGE="$MESSAGE"$'\n'"$LINE"
+  fi
+done
+if [ -n "$MESSAGE" ] && [[ ! $MESSAGE =~ ^$'\n'*$ ]]; then
+  send_message "$MESSAGE"
+fi
 set +x
 
 ## Are we verbose? Then put a message to syslog...
 if [ "$VERBOSE" == "true" ] ; then
-  logger "$PROG sent $SUBJECT => Telegram Channel $TELEGRAM_BOT - code: $HTTP_CODE status: $STATUS"
+  logger "$PROG sent $SUBJECT => Telegram Channel $TELEGRAM_BOT (${#NOTIFICATION_MESSAGE} chars) code: ${HTTP_CODES[@]} status: ${STATUSES[@]}"
 fi
 
 # exit 0 if no errors from curl request, else exit non-zero
-[ "$STATUS" = 0 -a "$HTTP_CODE" = 200 ]
+exit $EX
